@@ -1,4 +1,4 @@
-# FinPulse India 🇮🇳
+# FinPulse India
 
 AI-curated Indian finance news — Sensex, Nifty, RBI, Indian economy, startups & policy.
 
