@@ -115,7 +115,7 @@ export async function GET(request) {
 
     console.log("📰 [CRON] Articles parsed:", newArticles.length);
 
-    // Merge with existing articles, deduplicate, keep last 60
+    // Get existing articles
     console.log("💾 [CRON] Getting KV client...");
     const kv = getKV();
     
@@ -123,18 +123,36 @@ export async function GET(request) {
     const existing = (await kv.get("articles")) || [];
     console.log("💾 [CRON] Existing articles:", existing.length);
     
+    // Merge new with existing, deduplicate by title
     const existingTitles = new Set(existing.map((a) => a.title.toLowerCase()));
     const fresh = newArticles.filter((a) => !existingTitles.has(a.title.toLowerCase()));
-    const merged = [...fresh, ...existing].slice(0, 60);
+    let merged = [...fresh, ...existing];
 
-    console.log("💾 [CRON] Fresh articles:", fresh.length, "Total merged:", merged.length);
+    console.log("📰 [CRON] Fresh articles:", fresh.length);
+    console.log("📰 [CRON] Total before cleanup:", merged.length);
 
+    // DELETE ARTICLES OLDER THAN 7 DAYS
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    
+    merged = merged.filter((article) => {
+      const fetchedDate = new Date(article.fetchedAt);
+      const isRecent = fetchedDate > sevenDaysAgo;
+      if (!isRecent) {
+        console.log("🗑️  [CRON] Deleting old article:", article.title.substring(0, 40) + "...");
+      }
+      return isRecent;
+    });
+
+    console.log("📰 [CRON] Total after 7-day cleanup:", merged.length);
+
+    // Save to Redis
     console.log("💾 [CRON] Saving to KV...");
     await kv.set("articles", merged);
     await kv.set("lastUpdated", new Date().toISOString());
 
-    console.log("✅ [CRON] Success!");
-    return Response.json({ success: true, added: fresh.length, total: merged.length });
+    console.log("✅ [CRON] Success! Added:", fresh.length, "Total:", merged.length);
+    return Response.json({ success: true, added: fresh.length, total: merged.length, deleted: existing.length - fresh.length });
   } catch (e) {
     console.log("❌ [CRON] Error:", e.message);
     console.log("❌ [CRON] Stack:", e.stack);
