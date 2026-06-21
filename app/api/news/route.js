@@ -53,7 +53,8 @@ export async function GET() {
       { articles, lastUpdated },
       {
         headers: {
-          "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600",
+          // Cache for 1 hour so new visitors always see cached articles
+          "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=7200",
         },
       }
     );
