@@ -1,3 +1,7 @@
+// Force this route to run on every request and never cache its internal fetches.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 // Removes leftover citation tags like <cite index="5-22">...</cite>
 // that were saved from the old web_search-based cron runs.
 function stripTags(text) {
@@ -27,10 +31,11 @@ export async function GET() {
       throw new Error("Missing KV credentials");
     }
 
-    // Get articles
+    // Get articles — no-store so Next.js never serves a cached snapshot
     const articlesRes = await fetch(`${url}/get/articles`, {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
     });
 
     const articlesData = await articlesRes.json();
@@ -44,24 +49,26 @@ export async function GET() {
       }
     }
 
-    // Strip any leftover citation tags from each article
     if (Array.isArray(articles)) {
       articles = articles.map(cleanArticle);
     }
     console.log("📖 [GET-NEWS] Cleaned articles:", articles.length);
 
-    // Get lastUpdated
+    // Get lastUpdated — also no-store
     const lastUpdatedRes = await fetch(`${url}/get/lastUpdated`, {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
     });
     const lastUpdatedData = await lastUpdatedRes.json();
     const lastUpdated = lastUpdatedData.result || null;
+    console.log("📖 [GET-NEWS] lastUpdated:", lastUpdated);
 
     return Response.json(
       { articles, lastUpdated },
       {
         headers: {
+          // Short browser/CDN cache; route itself is always fresh from Redis
           "Cache-Control": "public, s-maxage=600, stale-while-revalidate=1200",
         },
       }
