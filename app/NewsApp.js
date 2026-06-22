@@ -18,16 +18,21 @@ const STYLES = `
 
 .fp {
   --paper:#FBFAF7; --ink:#17140F; --muted:#6F695E; --line:#E7E2D8;
-  --accent:#0B5563; --accent-soft:#E5EEEF; --breaking:#B23A2E; --card:#FFFFFF;
+  --accent:#0B5563; --accent-soft:#E5EEEF; --breaking:#B23A2E; --body:#3D382F;
   --serif:'Newsreader',Georgia,serif; --sans:'Inter',system-ui,sans-serif; --mono:'IBM Plex Mono',monospace;
   background:var(--paper); color:var(--ink); min-height:100vh;
   font-family:var(--sans); -webkit-font-smoothing:antialiased;
+  transition:background .25s ease, color .25s ease;
+}
+.fp[data-theme="dark"] {
+  --paper:#16150F; --ink:#ECE7DC; --muted:#948D7E; --line:#2C2A23;
+  --accent:#5DAEBC; --accent-soft:#1B2E2F; --breaking:#E38476; --body:#C8C2B4;
 }
 .fp * { box-sizing:border-box; }
 .fp-wrap { max-width:1080px; margin:0 auto; padding:0 24px; }
 
 .fp-masthead { border-bottom:1px solid var(--line); position:sticky; top:0; z-index:20;
-  background:rgba(251,250,247,.86); backdrop-filter:blur(8px); }
+  background:color-mix(in srgb, var(--paper) 86%, transparent); backdrop-filter:blur(8px); }
 .fp-mast-top { display:flex; justify-content:space-between; align-items:flex-end;
   gap:16px; flex-wrap:wrap; padding:22px 0 16px; }
 .fp-eyebrow { font-family:var(--mono); font-size:11px; letter-spacing:.18em;
@@ -36,14 +41,22 @@ const STYLES = `
   line-height:1; letter-spacing:-.01em; margin:0; }
 .fp-wordmark span { color:var(--accent); }
 .fp-tagline { font-size:13px; color:var(--muted); margin:8px 0 0; }
+.fp-right { display:flex; align-items:center; gap:16px; }
 .fp-status { display:flex; align-items:center; gap:8px; font-family:var(--mono);
   font-size:12px; color:var(--muted); white-space:nowrap; }
 .fp-dot { width:7px; height:7px; border-radius:50%; background:var(--accent);
-  box-shadow:0 0 0 0 rgba(11,85,99,.5); animation:fp-pulse 2.4s infinite; }
+  animation:fp-pulse 2.4s infinite; }
 @keyframes fp-pulse { 0%{box-shadow:0 0 0 0 rgba(11,85,99,.45);} 70%{box-shadow:0 0 0 7px rgba(11,85,99,0);} 100%{box-shadow:0 0 0 0 rgba(11,85,99,0);} }
+.fp[data-theme="dark"] .fp-dot { animation-name:fp-pulse-d; }
+@keyframes fp-pulse-d { 0%{box-shadow:0 0 0 0 rgba(93,174,188,.5);} 70%{box-shadow:0 0 0 7px rgba(93,174,188,0);} 100%{box-shadow:0 0 0 0 rgba(93,174,188,0);} }
 
-.fp-tabs { display:flex; gap:4px; overflow-x:auto; padding-bottom:2px;
-  scrollbar-width:none; }
+.fp-theme { background:none; border:1px solid var(--line); border-radius:8px;
+  width:36px; height:36px; cursor:pointer; color:var(--muted); font-size:15px;
+  display:flex; align-items:center; justify-content:center; transition:all .15s; }
+.fp-theme:hover { color:var(--accent); border-color:var(--accent); }
+.fp-theme:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+.fp-tabs { display:flex; gap:4px; overflow-x:auto; padding-bottom:2px; scrollbar-width:none; }
 .fp-tabs::-webkit-scrollbar { display:none; }
 .fp-tab { font-family:var(--sans); font-size:13px; font-weight:500; color:var(--muted);
   background:none; border:none; padding:10px 12px; cursor:pointer; white-space:nowrap;
@@ -57,27 +70,24 @@ const STYLES = `
   display:flex; align-items:center; gap:12px; }
 .fp-section-label::after { content:""; flex:1; height:1px; background:var(--line); }
 
-/* ranked row */
 .fp-list { display:flex; flex-direction:column; }
 .fp-item { display:grid; grid-template-columns:56px 1fr; gap:18px;
   padding:22px 0; border-top:1px solid var(--line); align-items:start; }
 .fp-item:first-child { border-top:none; }
-.fp-rank { font-family:var(--mono); font-size:16px; font-weight:500; color:var(--accent);
-  padding-top:4px; }
+.fp-rank { font-family:var(--mono); font-size:16px; font-weight:500; color:var(--accent); padding-top:4px; }
 .fp-cat { font-family:var(--mono); font-size:11px; letter-spacing:.12em;
   text-transform:uppercase; color:var(--muted); }
 .fp-breaking { color:var(--breaking); }
 .fp-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:6px; }
 .fp-title { font-family:var(--serif); font-weight:600; font-size:19px; line-height:1.28;
   letter-spacing:-.005em; margin:6px 0 8px; }
-.fp-summary { font-size:14.5px; line-height:1.62; color:#3D382F; margin:0 0 10px; }
+.fp-summary { font-size:14.5px; line-height:1.62; color:var(--body); margin:0 0 10px; }
 .fp-meta { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
   font-family:var(--mono); font-size:12px; color:var(--muted); }
 .fp-ticker { color:var(--accent); background:var(--accent-soft); padding:1px 7px;
   border-radius:4px; font-weight:500; }
 .fp-meta-sep { width:3px; height:3px; border-radius:50%; background:var(--line); }
 
-/* hero (rank 01) */
 .fp-hero { grid-template-columns:64px 1fr; padding:8px 0 30px; }
 .fp-hero .fp-rank { font-size:22px; }
 .fp-hero .fp-title { font-size:32px; line-height:1.16; margin:8px 0 12px; }
@@ -93,14 +103,13 @@ const STYLES = `
 .fp-state h2 { font-family:var(--serif); font-size:22px; font-weight:600; margin:0 0 8px; }
 .fp-state p { font-size:14px; color:var(--muted); margin:0; }
 .fp-spinner { width:30px; height:30px; border:2px solid var(--line);
-  border-top-color:var(--accent); border-radius:50%; margin:0 auto 18px;
-  animation:fp-spin .8s linear infinite; }
+  border-top-color:var(--accent); border-radius:50%; margin:0 auto 18px; animation:fp-spin .8s linear infinite; }
 @keyframes fp-spin { to{ transform:rotate(360deg);} }
 
 .fp-foot { border-top:1px solid var(--line); margin-top:48px; padding:24px 0 40px;
   font-size:12px; color:var(--muted); line-height:1.6; }
 
-@media (prefers-reduced-motion:reduce){ .fp-dot,.fp-spinner{ animation:none; } }
+@media (prefers-reduced-motion:reduce){ .fp-dot,.fp-spinner{ animation:none; } .fp{ transition:none; } }
 `;
 
 export default function NewsApp() {
@@ -108,6 +117,33 @@ export default function NewsApp() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("All");
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [theme, setTheme] = useState("light");
+
+  // Resolve theme on mount: saved preference, else system preference
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("fp-theme");
+      if (saved === "dark" || saved === "light") {
+        setTheme(saved);
+      } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+        setTheme("dark");
+      }
+    } catch (e) {
+      /* localStorage unavailable - fall back to light */
+    }
+  }, []);
+
+  const toggleTheme = () => {
+    setTheme((prev) => {
+      const next = prev === "dark" ? "light" : "dark";
+      try {
+        localStorage.setItem("fp-theme", next);
+      } catch (e) {
+        /* ignore */
+      }
+      return next;
+    });
+  };
 
   const loadNews = useCallback(async () => {
     try {
@@ -169,7 +205,7 @@ export default function NewsApp() {
   }
 
   return (
-    <div className="fp">
+    <div className="fp" data-theme={theme}>
       <style>{STYLES}</style>
 
       <header className="fp-masthead">
@@ -180,9 +216,19 @@ export default function NewsApp() {
               <h1 className="fp-wordmark">Fin<span>Pulse</span></h1>
               <p className="fp-tagline">Today's market-moving stories, ranked by importance.</p>
             </div>
-            <div className="fp-status">
-              <span className="fp-dot" />
-              {lastUpdated ? `Updated ${timeAgo(lastUpdated)}` : "Live"}
+            <div className="fp-right">
+              <div className="fp-status">
+                <span className="fp-dot" />
+                {lastUpdated ? `Updated ${timeAgo(lastUpdated)}` : "Live"}
+              </div>
+              <button
+                className="fp-theme"
+                onClick={toggleTheme}
+                aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                title={theme === "dark" ? "Light mode" : "Dark mode"}
+              >
+                {theme === "dark" ? "\u2600" : "\u263E"}
+              </button>
             </div>
           </div>
           <nav className="fp-tabs">
@@ -218,7 +264,7 @@ export default function NewsApp() {
         {!loading && hero && (
           <>
             <div className="fp-section-label">
-              {filter === "All" ? "Top story" : `${filter} · top story`}
+              {filter === "All" ? "Top story" : `${filter} \u00B7 top story`}
             </div>
             <Item article={hero} rank={1} isHero />
 
