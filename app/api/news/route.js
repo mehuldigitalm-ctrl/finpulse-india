@@ -1,22 +1,36 @@
+// Removes leftover citation tags like <cite index="5-22">...</cite>
+// that were saved from the old web_search-based cron runs.
+function stripTags(text) {
+  if (typeof text !== "string") return text;
+  return text
+    .replace(/<cite[^>]*>/gi, "")
+    .replace(/<\/cite>/gi, "")
+    .trim();
+}
+
+function cleanArticle(a) {
+  return {
+    ...a,
+    title: stripTags(a.title),
+    summary: stripTags(a.summary),
+  };
+}
+
 export async function GET() {
   console.log("📖 [GET-NEWS] Request started");
-  
+
   try {
     const url = process.env.KV_REST_API_URL || process.env.STORAGE_REST_API_URL;
     const token = process.env.KV_REST_API_TOKEN || process.env.STORAGE_REST_API_TOKEN;
-
-    console.log("📖 [GET-NEWS] URL:", url ? "✓" : "✗");
-    console.log("📖 [GET-NEWS] Token:", token ? "✓" : "✗");
 
     if (!url || !token) {
       throw new Error("Missing KV credentials");
     }
 
     // Get articles
-    console.log("📖 [GET-NEWS] Fetching articles from Redis...");
     const articlesRes = await fetch(`${url}/get/articles`, {
       method: "GET",
-      headers: { "Authorization": `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token}` },
     });
 
     const articlesData = await articlesRes.json();
@@ -24,32 +38,30 @@ export async function GET() {
     if (articlesData.result) {
       try {
         articles = JSON.parse(articlesData.result);
-        console.log("📖 [GET-NEWS] Parsed articles:", articles.length);
       } catch (e) {
         console.log("📖 [GET-NEWS] Parse error:", e.message);
         articles = articlesData.result;
       }
     }
 
+    // Strip any leftover citation tags from each article
+    if (Array.isArray(articles)) {
+      articles = articles.map(cleanArticle);
+    }
+    console.log("📖 [GET-NEWS] Cleaned articles:", articles.length);
+
     // Get lastUpdated
-    console.log("📖 [GET-NEWS] Fetching lastUpdated from Redis...");
     const lastUpdatedRes = await fetch(`${url}/get/lastUpdated`, {
       method: "GET",
-      headers: { "Authorization": `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token}` },
     });
-
     const lastUpdatedData = await lastUpdatedRes.json();
     const lastUpdated = lastUpdatedData.result || null;
-    console.log("📖 [GET-NEWS] Last updated:", lastUpdated);
 
-    console.log("📖 [GET-NEWS] Success! Returning", articles.length, "articles");
-    
     return Response.json(
       { articles, lastUpdated },
       {
         headers: {
-          // 10-minute cache for faster article updates
-          // Articles always fresh within 10 minutes of cron run
           "Cache-Control": "public, s-maxage=600, stale-while-revalidate=1200",
         },
       }
