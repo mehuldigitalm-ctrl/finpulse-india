@@ -151,8 +151,18 @@ export async function GET(request) {
     await kv.set("articles", merged);
     await kv.set("lastUpdated", new Date().toISOString());
 
+    // NEW: Update cache version to invalidate browser caches
+    const cacheVersion = Date.now().toString();
+    await kv.set("cacheVersion", cacheVersion);
+    console.log("🔄 [CRON] Cache version updated:", cacheVersion);
+
     console.log("✅ [CRON] Success! Added:", fresh.length, "Total:", merged.length);
-    return Response.json({ success: true, added: fresh.length, total: merged.length, deleted: existing.length - fresh.length });
+    return Response.json({ 
+      success: true, 
+      added: fresh.length, 
+      total: merged.length,
+      cacheVersion
+    });
   } catch (e) {
     console.log("❌ [CRON] Error:", e.message);
     console.log("❌ [CRON] Stack:", e.stack);
