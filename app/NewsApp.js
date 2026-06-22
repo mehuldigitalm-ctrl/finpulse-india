@@ -4,14 +4,6 @@ import { useState, useEffect, useCallback } from "react";
 
 const CATEGORIES = ["All", "Markets", "Economy", "Banking", "Startups", "Policy"];
 
-const CATEGORY_COLOR = {
-  Markets: "#2563eb",
-  Economy: "#059669",
-  Banking: "#7c3aed",
-  Startups: "#0891b2",
-  Policy: "#ea580c",
-};
-
 function timeAgo(dateStr) {
   const mins = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
   if (mins < 1) return "just now";
@@ -21,11 +13,95 @@ function timeAgo(dateStr) {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-function badge(score) {
-  if (score >= 8) return { label: "Breaking", color: "#dc2626", bg: "#fef2f2" };
-  if (score >= 6) return { label: "Important", color: "#d97706", bg: "#fffbeb" };
-  return { label: "Update", color: "#6b7280", bg: "#f3f4f6" };
+const STYLES = `
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+.fp {
+  --paper:#FBFAF7; --ink:#17140F; --muted:#6F695E; --line:#E7E2D8;
+  --accent:#0B5563; --accent-soft:#E5EEEF; --breaking:#B23A2E; --card:#FFFFFF;
+  --serif:'Newsreader',Georgia,serif; --sans:'Inter',system-ui,sans-serif; --mono:'IBM Plex Mono',monospace;
+  background:var(--paper); color:var(--ink); min-height:100vh;
+  font-family:var(--sans); -webkit-font-smoothing:antialiased;
 }
+.fp * { box-sizing:border-box; }
+.fp-wrap { max-width:1080px; margin:0 auto; padding:0 24px; }
+
+.fp-masthead { border-bottom:1px solid var(--line); position:sticky; top:0; z-index:20;
+  background:rgba(251,250,247,.86); backdrop-filter:blur(8px); }
+.fp-mast-top { display:flex; justify-content:space-between; align-items:flex-end;
+  gap:16px; flex-wrap:wrap; padding:22px 0 16px; }
+.fp-eyebrow { font-family:var(--mono); font-size:11px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--accent); margin:0 0 6px; }
+.fp-wordmark { font-family:var(--serif); font-weight:600; font-size:30px;
+  line-height:1; letter-spacing:-.01em; margin:0; }
+.fp-wordmark span { color:var(--accent); }
+.fp-tagline { font-size:13px; color:var(--muted); margin:8px 0 0; }
+.fp-status { display:flex; align-items:center; gap:8px; font-family:var(--mono);
+  font-size:12px; color:var(--muted); white-space:nowrap; }
+.fp-dot { width:7px; height:7px; border-radius:50%; background:var(--accent);
+  box-shadow:0 0 0 0 rgba(11,85,99,.5); animation:fp-pulse 2.4s infinite; }
+@keyframes fp-pulse { 0%{box-shadow:0 0 0 0 rgba(11,85,99,.45);} 70%{box-shadow:0 0 0 7px rgba(11,85,99,0);} 100%{box-shadow:0 0 0 0 rgba(11,85,99,0);} }
+
+.fp-tabs { display:flex; gap:4px; overflow-x:auto; padding-bottom:2px;
+  scrollbar-width:none; }
+.fp-tabs::-webkit-scrollbar { display:none; }
+.fp-tab { font-family:var(--sans); font-size:13px; font-weight:500; color:var(--muted);
+  background:none; border:none; padding:10px 12px; cursor:pointer; white-space:nowrap;
+  border-bottom:2px solid transparent; transition:color .15s; }
+.fp-tab:hover { color:var(--ink); }
+.fp-tab[aria-pressed="true"] { color:var(--accent); border-bottom-color:var(--accent); }
+.fp-tab:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+
+.fp-section-label { font-family:var(--mono); font-size:11px; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--muted); margin:32px 0 14px;
+  display:flex; align-items:center; gap:12px; }
+.fp-section-label::after { content:""; flex:1; height:1px; background:var(--line); }
+
+/* ranked row */
+.fp-list { display:flex; flex-direction:column; }
+.fp-item { display:grid; grid-template-columns:56px 1fr; gap:18px;
+  padding:22px 0; border-top:1px solid var(--line); align-items:start; }
+.fp-item:first-child { border-top:none; }
+.fp-rank { font-family:var(--mono); font-size:16px; font-weight:500; color:var(--accent);
+  padding-top:4px; }
+.fp-cat { font-family:var(--mono); font-size:11px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--muted); }
+.fp-breaking { color:var(--breaking); }
+.fp-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:6px; }
+.fp-title { font-family:var(--serif); font-weight:600; font-size:19px; line-height:1.28;
+  letter-spacing:-.005em; margin:6px 0 8px; }
+.fp-summary { font-size:14.5px; line-height:1.62; color:#3D382F; margin:0 0 10px; }
+.fp-meta { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  font-family:var(--mono); font-size:12px; color:var(--muted); }
+.fp-ticker { color:var(--accent); background:var(--accent-soft); padding:1px 7px;
+  border-radius:4px; font-weight:500; }
+.fp-meta-sep { width:3px; height:3px; border-radius:50%; background:var(--line); }
+
+/* hero (rank 01) */
+.fp-hero { grid-template-columns:64px 1fr; padding:8px 0 30px; }
+.fp-hero .fp-rank { font-size:22px; }
+.fp-hero .fp-title { font-size:32px; line-height:1.16; margin:8px 0 12px; }
+.fp-hero .fp-summary { font-size:16px; }
+
+@media (max-width:640px){
+  .fp-item, .fp-hero { grid-template-columns:40px 1fr; gap:12px; }
+  .fp-hero .fp-title { font-size:25px; }
+  .fp-wordmark { font-size:25px; }
+}
+
+.fp-state { text-align:center; padding:80px 20px; }
+.fp-state h2 { font-family:var(--serif); font-size:22px; font-weight:600; margin:0 0 8px; }
+.fp-state p { font-size:14px; color:var(--muted); margin:0; }
+.fp-spinner { width:30px; height:30px; border:2px solid var(--line);
+  border-top-color:var(--accent); border-radius:50%; margin:0 auto 18px;
+  animation:fp-spin .8s linear infinite; }
+@keyframes fp-spin { to{ transform:rotate(360deg);} }
+
+.fp-foot { border-top:1px solid var(--line); margin-top:48px; padding:24px 0 40px;
+  font-size:12px; color:var(--muted); line-height:1.6; }
+
+@media (prefers-reduced-motion:reduce){ .fp-dot,.fp-spinner{ animation:none; } }
+`;
 
 export default function NewsApp() {
   const [articles, setArticles] = useState([]);
@@ -46,279 +122,125 @@ export default function NewsApp() {
     }
   }, []);
 
-  // Load on mount + refresh from cache every 5 min (free, no AI calls)
   useEffect(() => {
     loadNews();
     const interval = setInterval(loadNews, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [loadNews]);
 
-  const filtered = filter === "All" ? articles : articles.filter((a) => a.category === filter);
+  const filtered = (filter === "All" ? articles : articles.filter((a) => a.category === filter))
+    .slice()
+    .sort((a, b) => (b.importance || 0) - (a.importance || 0));
+
+  const hero = filtered[0];
+  const rest = filtered.slice(1);
+  const pad = (n) => String(n).padStart(2, "0");
+
+  function Item({ article, rank, isHero }) {
+    const breaking = (article.importance || 0) >= 9;
+    return (
+      <article className={isHero ? "fp-item fp-hero" : "fp-item"}>
+        <div className="fp-rank">{pad(rank)}</div>
+        <div>
+          <div className="fp-head">
+            <span className="fp-cat">{article.category}</span>
+            {breaking && <span className="fp-cat fp-breaking">● Breaking</span>}
+          </div>
+          <h3 className="fp-title">{article.title}</h3>
+          <p className="fp-summary">{article.summary}</p>
+          <div className="fp-meta">
+            <span>{article.source}</span>
+            {article.ticker && (
+              <>
+                <span className="fp-meta-sep" />
+                <span className="fp-ticker">{article.ticker}</span>
+              </>
+            )}
+            {article.fetchedAt && (
+              <>
+                <span className="fp-meta-sep" />
+                <span>{timeAgo(article.fetchedAt)}</span>
+              </>
+            )}
+          </div>
+        </div>
+      </article>
+    );
+  }
 
   return (
-    <div style={{ minHeight: "100vh" }}>
-      {/* Header */}
-      <header
-        style={{
-          background: "#fff",
-          borderBottom: "1px solid #e5e7eb",
-          position: "sticky",
-          top: 0,
-          zIndex: 10,
-        }}
-      >
-        <div style={{ maxWidth: 1040, margin: "0 auto", padding: "14px 20px" }}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              flexWrap: "wrap",
-              gap: 12,
-            }}
-          >
-            <div>
-              <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>
-                <span style={{ color: "#f97316" }}>◆</span> FinPulse India
-              </h1>
-              <p
-                style={{
-                  fontSize: 11,
-                  color: "#9ca3af",
-                  fontWeight: 500,
-                  textTransform: "uppercase",
-                  letterSpacing: 0.5,
-                }}
-              >
-                AI-Curated Indian Finance News
-              </p>
-            </div>
+    <div className="fp">
+      <style>{STYLES}</style>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              {lastUpdated && (
-                <span style={{ fontSize: 12, color: "#6b7280" }}>
-                  Updated {timeAgo(lastUpdated)}
-                </span>
-              )}
-              <span
-                style={{
-                  fontSize: 11,
-                  color: "#059669",
-                  background: "#ecfdf5",
-                  padding: "4px 10px",
-                  borderRadius: 12,
-                  fontWeight: 600,
-                }}
-              >
-                ● Live — updates every 3 hours
-              </span>
+      <header className="fp-masthead">
+        <div className="fp-wrap">
+          <div className="fp-mast-top">
+            <div>
+              <p className="fp-eyebrow">India · Markets Brief</p>
+              <h1 className="fp-wordmark">Fin<span>Pulse</span></h1>
+              <p className="fp-tagline">Today's market-moving stories, ranked by importance.</p>
+            </div>
+            <div className="fp-status">
+              <span className="fp-dot" />
+              {lastUpdated ? `Updated ${timeAgo(lastUpdated)}` : "Live"}
             </div>
           </div>
-
-          {/* Category pills */}
-          <div style={{ display: "flex", gap: 4, marginTop: 14, overflowX: "auto" }}>
+          <nav className="fp-tabs">
             {CATEGORIES.map((cat) => (
               <button
                 key={cat}
+                className="fp-tab"
+                aria-pressed={filter === cat}
                 onClick={() => setFilter(cat)}
-                style={{
-                  padding: "5px 14px",
-                  borderRadius: 20,
-                  border: "none",
-                  background: filter === cat ? "#111" : "transparent",
-                  color: filter === cat ? "#fff" : "#6b7280",
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  whiteSpace: "nowrap",
-                }}
               >
                 {cat}
               </button>
             ))}
-          </div>
+          </nav>
         </div>
       </header>
 
-      {/* Main */}
-      <main style={{ maxWidth: 1040, margin: "0 auto", padding: "20px 20px 60px" }}>
-        {/* Loading */}
+      <main className="fp-wrap">
         {loading && (
-          <div style={{ textAlign: "center", padding: "48px 20px" }}>
-            <div
-              style={{
-                width: 36,
-                height: 36,
-                border: "3px solid #e5e7eb",
-                borderTopColor: "#f97316",
-                borderRadius: "50%",
-                margin: "0 auto 16px",
-                animation: "spin .8s linear infinite",
-              }}
-            />
-            <p style={{ fontSize: 14, color: "#6b7280", fontWeight: 500 }}>Loading latest news…</p>
+          <div className="fp-state">
+            <div className="fp-spinner" />
+            <p>Loading the brief…</p>
           </div>
         )}
 
-        {/* Empty */}
-        {!loading && articles.length === 0 && (
-          <div style={{ textAlign: "center", padding: "60px 20px" }}>
-            <div style={{ fontSize: 48, marginBottom: 16 }}>📰</div>
-            <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
-              News is on its way
-            </h2>
-            <p style={{ fontSize: 14, color: "#6b7280" }}>
-              The AI agent updates news every hour. Check back shortly.
-            </p>
+        {!loading && filtered.length === 0 && (
+          <div className="fp-state">
+            <h2>Nothing in the brief yet</h2>
+            <p>The next update runs within a few hours. Check back shortly.</p>
           </div>
         )}
 
-        {/* Articles grid */}
-        {filtered.length > 0 && (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))",
-              gap: 16,
-            }}
-          >
-            {filtered.map((article) => {
-              const b = badge(article.importance);
-              return (
-                <article
-                  key={article.id}
-                  style={{
-                    background: "#fff",
-                    borderRadius: 10,
-                    border: "1px solid #e5e7eb",
-                    padding: 20,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 10,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: 11,
-                        fontWeight: 700,
-                        color: CATEGORY_COLOR[article.category] || "#6b7280",
-                        textTransform: "uppercase",
-                        letterSpacing: 0.5,
-                      }}
-                    >
-                      {article.category}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 700,
-                        padding: "2px 8px",
-                        borderRadius: 10,
-                        color: b.color,
-                        background: b.bg,
-                      }}
-                    >
-                      {b.label}
-                    </span>
-                  </div>
+        {!loading && hero && (
+          <>
+            <div className="fp-section-label">
+              {filter === "All" ? "Top story" : `${filter} · top story`}
+            </div>
+            <Item article={hero} rank={1} isHero />
 
-                  <h3 style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.35 }}>
-                    {article.title}
-                  </h3>
-
-                  <p style={{ fontSize: 13, color: "#4b5563", lineHeight: 1.55, flex: 1 }}>
-                    {article.summary}
-                  </p>
-
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      marginTop: 4,
-                    }}
-                  >
-                    <span style={{ fontSize: 11, color: "#9ca3af", fontWeight: 500 }}>
-                      {article.source}
-                    </span>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      {article.ticker && (
-                        <span
-                          style={{
-                            fontSize: 11,
-                            fontWeight: 700,
-                            color: "#2563eb",
-                            background: "#eff6ff",
-                            padding: "1px 6px",
-                            borderRadius: 4,
-                          }}
-                        >
-                          {article.ticker}
-                        </span>
-                      )}
-                      <span style={{ fontSize: 11, color: "#9ca3af" }}>
-                        {article.fetchedAt ? timeAgo(article.fetchedAt) : ""}
-                      </span>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Stats */}
-        {articles.length > 0 && (
-          <div
-            style={{
-              marginTop: 24,
-              padding: "12px 16px",
-              background: "#fff",
-              borderRadius: 8,
-              border: "1px solid #e5e7eb",
-              display: "flex",
-              justifyContent: "center",
-              gap: 24,
-              flexWrap: "wrap",
-              fontSize: 12,
-              color: "#6b7280",
-            }}
-          >
-            <span>
-              <strong style={{ color: "#111" }}>{articles.length}</strong> articles
-            </span>
-            <span>
-              <strong style={{ color: "#111" }}>{filtered.length}</strong> showing
-            </span>
-            <span>
-              <strong style={{ color: "#111" }}>
-                {articles.filter((a) => a.importance >= 8).length}
-              </strong>{" "}
-              breaking
-            </span>
-            <span style={{ color: "#059669" }}>Auto-updates every 3 hours</span>
-          </div>
+            {rest.length > 0 && (
+              <>
+                <div className="fp-section-label">The rest of the brief</div>
+                <div className="fp-list">
+                  {rest.map((a, i) => (
+                    <Item key={a.id} article={a} rank={i + 2} />
+                  ))}
+                </div>
+              </>
+            )}
+          </>
         )}
       </main>
 
-      {/* Footer */}
-      <footer
-        style={{
-          textAlign: "center",
-          padding: "20px",
-          fontSize: 11,
-          color: "#9ca3af",
-          borderTop: "1px solid #e5e7eb",
-        }}
-      >
-        FinPulse India — AI-curated news. Not financial advice. Verify before investing.
+      <footer className="fp-foot">
+        <div className="fp-wrap">
+          FinPulse aggregates and summarizes public financial news for information only.
+          It is not investment advice — verify the source before you trade.
+        </div>
       </footer>
     </div>
   );
