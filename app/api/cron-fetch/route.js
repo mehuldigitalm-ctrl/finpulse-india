@@ -12,109 +12,69 @@ function getKV() {
   });
 }
 
-// Indian finance news RSS feeds (free, reliable)
-const RSS_FEEDS = [
-  "https://feeds.bloomberg.com/markets/india.rss",
-  "https://feeds.moneycontrol.com/cnbc-tv18/",
-  "https://economictimes.indiatimes.com/archivelist/13357959.cms?feedtype=json",
-  "https://www.business-standard.com/rss/home_page_top_stories.rss",
-  "https://feeds.livemint.com/latest.rss",
-];
-
-async function fetchRSSHeadlines() {
-  console.log("📰 [RSS] Fetching from", RSS_FEEDS.length, "RSS feeds...");
-  
-  const headlines = [];
-  
-  for (const feed of RSS_FEEDS) {
-    try {
-      console.log("📰 [RSS] Fetching:", feed.substring(0, 50) + "...");
-      
-      const response = await fetch(feed, { timeout: 10000 });
-      if (!response.ok) {
-        console.log("⚠️  [RSS] Feed failed:", response.status, feed);
-        continue;
-      }
-
-      const text = await response.text();
-      
-      // Simple XML/JSON parsing for headlines
-      // Extract titles from <title> tags or "title" fields
-      const titleRegex = /<title>([^<]+)<\/title>/g;
-      let match;
-      let count = 0;
-      
-      while ((match = titleRegex.exec(text)) !== null && count < 3) {
-        const title = match[1].trim();
-        if (title.length > 10 && !title.includes("RSS") && !title.includes("Feed")) {
-          headlines.push(title);
-          count++;
-        }
-      }
-      
-      console.log("📰 [RSS] Got", count, "headlines from feed");
-    } catch (e) {
-      console.log("⚠️  [RSS] Error fetching feed:", e.message);
-    }
-  }
-
-  // Remove duplicates
-  const unique = [...new Set(headlines)];
-  console.log("📰 [RSS] Total unique headlines:", unique.length);
-  
-  return unique.slice(0, 15); // Top 15 headlines
-}
-
-const SUMMARIZATION_PROMPT = `You are an Indian finance news editor. Analyze these headlines and:
+const SUMMARIZATION_PROMPT = `You are an Indian finance news editor. Analyze these news articles and:
 1. Select the 5 most important finance-related ones
-2. For each, provide: title, 2-3 sentence summary, category, importance (1-10), source name
-
-Ignore duplicate topics and non-finance news.
+2. For each, provide: title, 2-3 sentence summary, category, importance (1-10), source
 
 Return ONLY a JSON array. Each item:
-{"title":"headline","summary":"summary text","category":"Markets|Economy|Banking|Startups|Policy","importance":1-10,"source":"guessed source"}
-
-Example:
-[
-  {"title":"NSE IPO at ₹30,000 Cr","summary":"NSE IPO expected...","category":"Startups","importance":9,"source":"Economic Times"},
-  {"title":"RBI Holds Rate at 5.25%","summary":"RBI decided...","category":"Policy","importance":8,"source":"RBI"}
-]`;
+{"title":"headline","summary":"summary text","category":"Markets|Economy|Banking|Startups|Policy","importance":1-10,"source":"source name","ticker":null}`;
 
 export async function GET(request) {
-  console.log("🚀 [CRON-RSS] Request received");
+  console.log("🚀 [CRON-NEWSAPI] Request received");
   
   // Verify cron secret
   const authHeader = request.headers.get("authorization");
-  console.log("🔐 [CRON-RSS] Auth header:", authHeader ? "present" : "MISSING");
+  console.log("🔐 [CRON-NEWSAPI] Auth header:", authHeader ? "present" : "MISSING");
   
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    console.log("❌ [CRON-RSS] Auth failed");
+    console.log("❌ [CRON-NEWSAPI] Auth failed");
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  console.log("✅ [CRON-RSS] Auth passed");
+  console.log("✅ [CRON-NEWSAPI] Auth passed");
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  console.log("🔑 [CRON-RSS] API Key:", apiKey ? "✓ present" : "✗ MISSING");
+  const newsApiKey = process.env.NEWS_API_KEY;
   
-  if (!apiKey) {
-    console.log("❌ [CRON-RSS] No API key");
-    return Response.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
+  console.log("🔑 [CRON-NEWSAPI] Anthropic API Key:", apiKey ? "✓ present" : "✗ MISSING");
+  console.log("📰 [CRON-NEWSAPI] NewsAPI Key:", newsApiKey ? "✓ present" : "✗ MISSING");
+  
+  if (!apiKey || !newsApiKey) {
+    console.log("❌ [CRON-NEWSAPI] Missing API keys");
+    return Response.json({ error: "Missing API keys" }, { status: 500 });
   }
 
   try {
-    // STEP 1: Fetch RSS headlines (free, reliable)
-    console.log("📡 [CRON-RSS] Step 1: Fetching RSS headlines...");
-    const headlines = await fetchRSSHeadlines();
+    // STEP 1: Fetch from NewsAPI (reliable, free)
+    console.log("📡 [CRON-NEWSAPI] Step 1: Fetching from NewsAPI...");
     
-    if (headlines.length === 0) {
-      throw new Error("No headlines found from RSS feeds");
+    const newsRes = await fetch(
+      `https://newsapi.org/v2/everything?q=india+finance+stocks+market+rupee+rbi&sortBy=publishedAt&language=en&pageSize=20&apiKey=${newsApiKey}`
+    );
+
+    console.log("📡 [CRON-NEWSAPI] NewsAPI response status:", newsRes.status);
+    
+    if (!newsRes.ok) {
+      throw new Error(`NewsAPI error: ${newsRes.status}`);
     }
 
-    console.log("📡 [CRON-RSS] Got", headlines.length, "headlines");
+    const newsData = await newsRes.json();
+    console.log("📡 [CRON-NEWSAPI] Articles from NewsAPI:", newsData.articles?.length || 0);
 
-    // STEP 2: Send headlines to Claude for summarization (cheap!)
-    console.log("📡 [CRON-RSS] Step 2: Sending to Claude for summarization...");
+    if (!newsData.articles || newsData.articles.length === 0) {
+      throw new Error("No articles from NewsAPI");
+    }
+
+    // Extract headlines and descriptions
+    const headlines = newsData.articles
+      .slice(0, 15)
+      .map((a) => `${a.title}\n${a.description || ""}`)
+      .join("\n\n");
+
+    console.log("📝 [CRON-NEWSAPI] Prepared headlines for Claude");
+
+    // STEP 2: Send to Claude for summarization (cheap!)
+    console.log("📡 [CRON-NEWSAPI] Step 2: Sending to Claude for analysis...");
     
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -129,31 +89,30 @@ export async function GET(request) {
         messages: [
           {
             role: "user",
-            content: `Headlines to analyze:\n\n${headlines.join("\n")}\n\n${SUMMARIZATION_PROMPT}`,
+            content: `${SUMMARIZATION_PROMPT}\n\nArticles:\n${headlines}`,
           },
         ],
       }),
     });
 
-    console.log("📡 [CRON-RSS] Claude API response status:", res.status);
+    console.log("📡 [CRON-NEWSAPI] Claude API response status:", res.status);
     
     const data = await res.json();
-    console.log("📡 [CRON-RSS] Claude response:", data.error ? "ERROR" : "OK");
     
     if (data.error) {
-      console.log("❌ [CRON-RSS] Claude API Error:", data.error.message);
+      console.log("❌ [CRON-NEWSAPI] Claude API Error:", data.error.message);
       throw new Error(data.error.message || "Claude API error");
     }
 
     // STEP 3: Parse Claude's response
-    console.log("📡 [CRON-RSS] Step 3: Parsing Claude response...");
+    console.log("📡 [CRON-NEWSAPI] Step 3: Parsing Claude response...");
     
     const textBlock = data.content
       ?.filter((b) => b.type === "text")
       .map((b) => b.text)
       .join("\n");
 
-    console.log("📝 [CRON-RSS] Text block found:", !!textBlock);
+    console.log("📝 [CRON-NEWSAPI] Text block found:", !!textBlock);
 
     if (!textBlock) throw new Error("No response from Claude");
 
@@ -161,7 +120,7 @@ export async function GET(request) {
     const start = cleaned.indexOf("[");
     const end = cleaned.lastIndexOf("]");
     
-    console.log("🔍 [CRON-RSS] JSON parsing - start:", start, "end:", end);
+    console.log("🔍 [CRON-NEWSAPI] JSON parsing - start:", start, "end:", end);
     
     if (start === -1 || end === -1) throw new Error("Could not parse articles");
 
@@ -169,25 +128,25 @@ export async function GET(request) {
       ...a,
       id: `${Date.now()}-${i}`,
       fetchedAt: new Date().toISOString(),
-      ticker: a.ticker || null, // Add default ticker field
+      ticker: a.ticker || null,
     }));
 
-    console.log("📰 [CRON-RSS] Articles parsed:", newArticles.length);
+    console.log("📰 [CRON-NEWSAPI] Articles parsed:", newArticles.length);
 
     // STEP 4: Merge with existing articles
-    console.log("💾 [CRON-RSS] Getting KV client...");
+    console.log("💾 [CRON-NEWSAPI] Getting KV client...");
     const kv = getKV();
     
-    console.log("💾 [CRON-RSS] Fetching existing articles...");
+    console.log("💾 [CRON-NEWSAPI] Fetching existing articles...");
     const existing = (await kv.get("articles")) || [];
-    console.log("💾 [CRON-RSS] Existing articles:", existing.length);
+    console.log("💾 [CRON-NEWSAPI] Existing articles:", existing.length);
     
     const existingTitles = new Set(existing.map((a) => a.title.toLowerCase()));
     const fresh = newArticles.filter((a) => !existingTitles.has(a.title.toLowerCase()));
     let merged = [...fresh, ...existing];
 
-    console.log("📰 [CRON-RSS] Fresh articles:", fresh.length);
-    console.log("📰 [CRON-RSS] Total before cleanup:", merged.length);
+    console.log("📰 [CRON-NEWSAPI] Fresh articles:", fresh.length);
+    console.log("📰 [CRON-NEWSAPI] Total before cleanup:", merged.length);
 
     // STEP 5: Delete articles older than 7 days
     const now = new Date();
@@ -197,33 +156,33 @@ export async function GET(request) {
       const fetchedDate = new Date(article.fetchedAt);
       const isRecent = fetchedDate > sevenDaysAgo;
       if (!isRecent) {
-        console.log("🗑️  [CRON-RSS] Deleting old article:", article.title.substring(0, 40) + "...");
+        console.log("🗑️  [CRON-NEWSAPI] Deleting old article:", article.title.substring(0, 40) + "...");
       }
       return isRecent;
     });
 
-    console.log("📰 [CRON-RSS] Total after 7-day cleanup:", merged.length);
+    console.log("📰 [CRON-NEWSAPI] Total after 7-day cleanup:", merged.length);
 
     // STEP 6: Save to Redis
-    console.log("💾 [CRON-RSS] Saving to KV...");
+    console.log("💾 [CRON-NEWSAPI] Saving to KV...");
     await kv.set("articles", merged);
     await kv.set("lastUpdated", new Date().toISOString());
     
-    // Update cache version for invalidation
+    // Update cache version
     const cacheVersion = Date.now().toString();
     await kv.set("cacheVersion", cacheVersion);
-    console.log("🔄 [CRON-RSS] Cache version updated:", cacheVersion);
+    console.log("🔄 [CRON-NEWSAPI] Cache version updated:", cacheVersion);
 
-    console.log("✅ [CRON-RSS] Success! Added:", fresh.length, "Total:", merged.length);
+    console.log("✅ [CRON-NEWSAPI] Success! Added:", fresh.length, "Total:", merged.length);
     return Response.json({ 
       success: true, 
       added: fresh.length, 
       total: merged.length,
-      method: "RSS + Claude summarization"
+      method: "NewsAPI + Claude"
     });
   } catch (e) {
-    console.log("❌ [CRON-RSS] Error:", e.message);
-    console.log("❌ [CRON-RSS] Stack:", e.stack);
+    console.log("❌ [CRON-NEWSAPI] Error:", e.message);
+    console.log("❌ [CRON-NEWSAPI] Stack:", e.stack);
     return Response.json({ error: e.message }, { status: 500 });
   }
 }
