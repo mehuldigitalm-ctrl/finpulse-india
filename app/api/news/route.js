@@ -48,13 +48,29 @@ export async function GET() {
     const lastUpdated = lastUpdatedData.result || null;
     console.log("📖 [GET-NEWS] Last updated:", lastUpdated);
 
+    // NEW: Get cache version for ETag
+    console.log("📖 [GET-NEWS] Fetching cache version...");
+    const cacheVersionRes = await fetch(`${url}/get/cacheVersion`, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+      },
+    });
+
+    const cacheVersionData = await cacheVersionRes.json();
+    const cacheVersion = cacheVersionData.result || "default";
+    console.log("📖 [GET-NEWS] Cache version:", cacheVersion);
+
     console.log("📖 [GET-NEWS] Success! Returning", articles.length, "articles");
     return Response.json(
       { articles, lastUpdated },
       {
         headers: {
-          // Cache for 1 hour so new visitors always see cached articles
+          // 1-hour cache with stale-while-revalidate
           "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=7200",
+          // NEW: ETag for cache invalidation
+          // When cacheVersion changes, browser will refetch
+          "ETag": `"${cacheVersion}"`,
         },
       }
     );
