@@ -12,18 +12,14 @@ export async function GET() {
       throw new Error("Missing KV credentials");
     }
 
-    // Get articles using REST API
-    console.log("📖 [GET-NEWS] Fetching articles from Upstash REST API...");
+    // Get articles
+    console.log("📖 [GET-NEWS] Fetching articles from Redis...");
     const articlesRes = await fetch(`${url}/get/articles`, {
       method: "GET",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-      },
+      headers: { "Authorization": `Bearer ${token}` },
     });
 
     const articlesData = await articlesRes.json();
-    console.log("📖 [GET-NEWS] Articles response status:", articlesRes.status);
-
     let articles = [];
     if (articlesData.result) {
       try {
@@ -35,48 +31,31 @@ export async function GET() {
       }
     }
 
-    // Get lastUpdated using REST API
-    console.log("📖 [GET-NEWS] Fetching lastUpdated from Upstash REST API...");
+    // Get lastUpdated
+    console.log("📖 [GET-NEWS] Fetching lastUpdated from Redis...");
     const lastUpdatedRes = await fetch(`${url}/get/lastUpdated`, {
       method: "GET",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-      },
+      headers: { "Authorization": `Bearer ${token}` },
     });
 
     const lastUpdatedData = await lastUpdatedRes.json();
     const lastUpdated = lastUpdatedData.result || null;
     console.log("📖 [GET-NEWS] Last updated:", lastUpdated);
 
-    // NEW: Get cache version for ETag
-    console.log("📖 [GET-NEWS] Fetching cache version...");
-    const cacheVersionRes = await fetch(`${url}/get/cacheVersion`, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-      },
-    });
-
-    const cacheVersionData = await cacheVersionRes.json();
-    const cacheVersion = cacheVersionData.result || "default";
-    console.log("📖 [GET-NEWS] Cache version:", cacheVersion);
-
     console.log("📖 [GET-NEWS] Success! Returning", articles.length, "articles");
+    
     return Response.json(
       { articles, lastUpdated },
       {
         headers: {
-          // 1-hour cache with stale-while-revalidate
-          "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=7200",
-          // NEW: ETag for cache invalidation
-          // When cacheVersion changes, browser will refetch
-          "ETag": `"${cacheVersion}"`,
+          // 3-hour cache matches cron frequency (every 3 hours)
+          // Articles update exactly when new ones arrive from cron
+          "Cache-Control": "public, s-maxage=10800, stale-while-revalidate=7200",
         },
       }
     );
   } catch (e) {
     console.log("📖 [GET-NEWS] Error:", e.message);
-    console.log("📖 [GET-NEWS] Stack:", e.stack);
     return Response.json({ error: e.message }, { status: 500 });
   }
 }
