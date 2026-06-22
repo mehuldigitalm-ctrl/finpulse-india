@@ -48,9 +48,9 @@ export async function GET() {
       { articles, lastUpdated },
       {
         headers: {
-          // 3-hour cache matches cron frequency (every 3 hours)
-          // Articles update exactly when new ones arrive from cron
-          "Cache-Control": "public, s-maxage=10800, stale-while-revalidate=7200",
+          // 10-minute cache for faster article updates
+          // Articles always fresh within 10 minutes of cron run
+          "Cache-Control": "public, s-maxage=600, stale-while-revalidate=1200",
         },
       }
     );
