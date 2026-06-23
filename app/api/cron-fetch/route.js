@@ -10,141 +10,149 @@ function getKV() {
   });
 }
 
-// Normalize a title so cosmetic differences don't defeat dedup.
-// Lowercases, strips punctuation/symbols/currency, drops digits, collapses spaces.
-function normalizeTitle(title) {
-  if (typeof title !== "string") return "";
-  return title
-    .toLowerCase()
-    .replace(/<cite[^>]*>|<\/cite>/gi, "") // strip any stray tags
-    .replace(/[₹$%,.\-:;!?'"“”‘’()\[\]/]/g, " ") // punctuation & symbols
-    .replace(/\d+/g, " ") // numbers (₹30,000 cr vs ₹30000 crore etc.)
-    .replace(/\b(crore|cr|lakh|rs|inr)\b/g, " ") // currency words
-    .replace(/\s+/g, " ")
-    .trim();
+// Your live feeds. Add/remove here anytime.
+const FEEDS = [
+  { name: "Zee Business", url: "https://zeenews.india.com/rss/business.xml" },
+  { name: "India Today", url: "https://www.indiatoday.in/rss/1206513" },
+  { name: "NDTV Profit", url: "https://feeds.feedburner.com/ndtvprofit-latest" },
+];
+
+const ITEMS_PER_FEED = 6; // most-recent N from each feed sent to Claude
+
+function unwrap(s) {
+  if (!s) return "";
+  return s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").trim();
+}
+function stripHtml(s) {
+  return unwrap(s)
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&").replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ").trim();
+}
+function pick(block, tag) {
+  const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "i"));
+  return m ? m[1] : "";
 }
 
-const SUMMARIZATION_PROMPT = `You are an Indian finance news editor. Analyze these news articles and:
-1. Select the 5 most important finance-related ones
-2. Do NOT include multiple articles about the same underlying story or event. If several cover the same story, pick the single best one and drop the rest.
-3. For each, provide: title, 2-3 sentence summary, category, importance (1-10), source
+async function fetchFeed(feed) {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    const res = await fetch(feed.url, {
+      cache: "no-store",
+      signal: ctrl.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; FinPulseBot/1.0)",
+        "Accept": "application/rss+xml, application/xml, text/xml, */*",
+      },
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      console.log(`⚠️ [RSS] ${feed.name} failed: ${res.status}`);
+      return [];
+    }
+    const xml = await res.text();
+    const blocks = xml.match(/<item[\s\S]*?<\/item>/gi) || [];
+    const items = blocks.slice(0, ITEMS_PER_FEED).map((b) => ({
+      source: feed.name,
+      title: stripHtml(pick(b, "title")),
+      desc: stripHtml(pick(b, "description")),
+      date: unwrap(pick(b, "pubDate")),
+    })).filter((i) => i.title);
+    console.log(`📰 [RSS] ${feed.name}: ${items.length} items`);
+    return items;
+  } catch (e) {
+    console.log(`⚠️ [RSS] ${feed.name} error: ${e.message}`);
+    return [];
+  }
+}
 
-Return ONLY a JSON array. Each item:
-{"title":"headline","summary":"summary text","category":"Markets|Economy|Banking|Startups|Policy","importance":1-10,"source":"source name","ticker":null}`;
+// Normalized title: lowercase, strip punctuation, collapse spaces.
+// Blocks near-identical repeats without collapsing genuinely different stories.
+function normalizeTitle(t) {
+  if (typeof t !== "string") return "";
+  return t.toLowerCase()
+    .replace(/<cite[^>]*>|<\/cite>/gi, "")
+    .replace(/[^a-z0-9₹ ]/g, " ")
+    .replace(/\s+/g, " ").trim();
+}
+
+const PROMPT = `You are an Indian finance news editor. Below are headlines from Indian news feeds, each tagged with its source.
+1. Keep ONLY finance/business/markets stories (Sensex, Nifty, stocks, RBI, economy, banking, startups, IPOs, policy). DISCARD anything non-financial (accidents, health, general news, politics not tied to markets).
+2. If several items cover the SAME story, keep only one — never output duplicates.
+3. Select up to 5, ordered by importance.
+4. For each, write a fresh 2-3 sentence summary in your own words. Use ₹ for rupees.
+Return ONLY a JSON array, no other text:
+[{"title":"","summary":"","category":"Markets|Economy|Banking|Startups|Policy","importance":1-10,"source":"the source tag","ticker":"NSE_TICKER or null"}]`;
 
 export async function GET(request) {
-  console.log("🚀 [CRON] Request received");
-
-  const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    console.log("❌ [CRON] Auth failed");
+  if (request.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  console.log("✅ [CRON] Auth passed");
-
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  const newsApiKey = process.env.NEWS_API_KEY;
-  if (!apiKey || !newsApiKey) {
-    return Response.json({ error: "Missing API keys" }, { status: 500 });
-  }
+  if (!apiKey) return Response.json({ error: "Missing ANTHROPIC_API_KEY" }, { status: 500 });
 
   try {
-    // STEP 1: Fetch from NewsAPI
-    console.log("📡 [CRON] Fetching from NewsAPI...");
-    const newsRes = await fetch(
-      `https://newsapi.org/v2/everything?q=india+finance+stocks+market+rupee+rbi&sortBy=publishedAt&language=en&pageSize=20&apiKey=${newsApiKey}`,
-      { cache: "no-store" }
-    );
-    if (!newsRes.ok) throw new Error(`NewsAPI error: ${newsRes.status}`);
+    // 1. Pull all feeds in parallel; failures are skipped, not fatal.
+    const results = await Promise.all(FEEDS.map(fetchFeed));
+    const items = results.flat();
+    console.log(`📰 [RSS] total items: ${items.length}`);
+    if (items.length === 0) throw new Error("No items from any feed");
 
-    const newsData = await newsRes.json();
-    console.log("📡 [CRON] Articles from NewsAPI:", newsData.articles?.length || 0);
-    if (!newsData.articles || newsData.articles.length === 0) {
-      throw new Error("No articles from NewsAPI");
-    }
+    const feedText = items
+      .map((i) => `[${i.source}] ${i.title}${i.desc ? " — " + i.desc : ""}`)
+      .join("\n");
 
-    const headlines = newsData.articles
-      .slice(0, 15)
-      .map((a) => `${a.title}\n${a.description || ""}`)
-      .join("\n\n");
-
-    // STEP 2: Claude summarization + in-run dedup via prompt
-    console.log("📡 [CRON] Sending to Claude...");
+    // 2. Claude filters to finance, dedupes, summarizes.
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 1500,
-        messages: [
-          { role: "user", content: `${SUMMARIZATION_PROMPT}\n\nArticles:\n${headlines}` },
-        ],
+        max_tokens: 1600,
+        messages: [{ role: "user", content: `${PROMPT}\n\nHeadlines:\n${feedText}` }],
       }),
     });
-
     const data = await res.json();
-    if (data.error) throw new Error(data.error.message || "Claude API error");
+    if (data.error) throw new Error(data.error.message);
 
-    const textBlock = data.content
-      ?.filter((b) => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
+    const textBlock = data.content?.filter((b) => b.type === "text").map((b) => b.text).join("\n");
     if (!textBlock) throw new Error("No response from Claude");
-
     const cleaned = textBlock.replace(/```json|```/g, "").trim();
-    const start = cleaned.indexOf("[");
-    const end = cleaned.lastIndexOf("]");
-    if (start === -1 || end === -1) throw new Error("Could not parse articles");
+    const s = cleaned.indexOf("["), e = cleaned.lastIndexOf("]");
+    if (s === -1 || e === -1) throw new Error("Could not parse articles");
 
-    const parsed = JSON.parse(cleaned.slice(start, end + 1)).map((a, i) => ({
-      ...a,
-      id: `${Date.now()}-${i}`,
-      fetchedAt: new Date().toISOString(),
-      ticker: a.ticker || null,
+    const parsed = JSON.parse(cleaned.slice(s, e + 1)).map((a, i) => ({
+      ...a, id: `${Date.now()}-${i}`, fetchedAt: new Date().toISOString(), ticker: a.ticker || null,
     }));
-    console.log("📰 [CRON] Articles parsed:", parsed.length);
+    console.log(`📰 [CRON] Claude returned: ${parsed.length}`);
 
-    // STEP 3: Dedup
+    // 3. Dedupe against the stored 7-day set (and within this batch).
     const kv = getKV();
     const existing = (await kv.get("articles")) || [];
-    console.log("💾 [CRON] Existing articles:", existing.length);
-
-    // Build a set of normalized titles already stored
     const seen = new Set(existing.map((a) => normalizeTitle(a.title)));
-
     const fresh = [];
-    for (const article of parsed) {
-      const key = normalizeTitle(article.title);
-      if (!key) continue; // skip empty/garbage titles
-      if (seen.has(key)) {
-        console.log("🔁 [CRON] Duplicate skipped:", article.title.substring(0, 50));
-        continue;
-      }
-      seen.add(key); // also blocks duplicates within this same batch
-      fresh.push(article);
+    for (const a of parsed) {
+      const key = normalizeTitle(a.title);
+      if (!key || seen.has(key)) { console.log(`🔁 dup skipped: ${a.title?.slice(0, 50)}`); continue; }
+      seen.add(key);
+      fresh.push(a);
     }
-    console.log("📰 [CRON] Fresh after dedup:", fresh.length);
 
+    // 4. Merge, drop >7 days old, save.
     let merged = [...fresh, ...existing];
+    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    merged = merged.filter((a) => new Date(a.fetchedAt) > cutoff);
 
-    // STEP 4: Drop articles older than 7 days
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    merged = merged.filter((a) => new Date(a.fetchedAt) > sevenDaysAgo);
-    console.log("📰 [CRON] Total after 7-day cleanup:", merged.length);
-
-    // STEP 5: Save
     await kv.set("articles", merged);
     await kv.set("lastUpdated", new Date().toISOString());
     await kv.set("cacheVersion", Date.now().toString());
 
-    console.log("✅ [CRON] Success! Added:", fresh.length, "Total:", merged.length);
+    console.log(`✅ [CRON] added ${fresh.length}, total ${merged.length}`);
     return Response.json({ success: true, added: fresh.length, total: merged.length });
-  } catch (e) {
-    console.log("❌ [CRON] Error:", e.message);
-    return Response.json({ error: e.message }, { status: 500 });
+  } catch (err) {
+    console.log("❌ [CRON] Error:", err.message);
+    return Response.json({ error: err.message }, { status: 500 });
   }
 }
