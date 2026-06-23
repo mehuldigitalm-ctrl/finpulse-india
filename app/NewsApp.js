@@ -166,7 +166,7 @@ export default function NewsApp() {
 
   const filtered = (filter === "All" ? articles : articles.filter((a) => a.category === filter))
     .slice()
-    .sort((a, b) => (b.importance || 0) - (a.importance || 0));
+    .sort((a, b) => new Date(b.fetchedAt || 0) - new Date(a.fetchedAt || 0));
 
   const hero = filtered[0];
   const rest = filtered.slice(1);
@@ -264,13 +264,13 @@ export default function NewsApp() {
         {!loading && hero && (
           <>
             <div className="fp-section-label">
-              {filter === "All" ? "Top story" : `${filter} \u00B7 top story`}
+              {filter === "All" ? "Latest" : `${filter} · latest`}
             </div>
             <Item article={hero} rank={1} isHero />
 
             {rest.length > 0 && (
               <>
-                <div className="fp-section-label">The rest of the brief</div>
+                <div className="fp-section-label">Earlier stories</div>
                 <div className="fp-list">
                   {rest.map((a, i) => (
                     <Item key={a.id} article={a} rank={i + 2} />
