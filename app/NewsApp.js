@@ -147,7 +147,7 @@ export default function NewsApp() {
 
   const loadNews = useCallback(async () => {
     try {
-      const res = await fetch("/api/news");
+      const res = await fetch(`/api/news?t=${Date.now()}`, { cache: "no-store" });
       const data = await res.json();
       if (data.articles?.length) setArticles(data.articles);
       if (data.lastUpdated) setLastUpdated(data.lastUpdated);
