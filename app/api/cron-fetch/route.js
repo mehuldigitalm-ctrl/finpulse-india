@@ -4,177 +4,154 @@ import { createClient } from "@vercel/kv";
 
 export const maxDuration = 60;
 
-function getKV() {
-  return createClient({
-    url: process.env.KV_REST_API_URL,
-    token: process.env.KV_REST_API_TOKEN,
-  });
-}
-
-const SYSTEM_PROMPT = `You are an Indian finance news editor. Analyze the provided RSS feed articles and extract the most important finance news stories.
-
-Focus on: Sensex, Nifty, NSE/BSE stocks, RBI policy, repo rate, CPI/WPI, GDP, rupee, Indian banking (SBI/HDFC/ICICI), startups/IPOs, Union Budget, GST, SEBI, FDI.
-
-For each article:
-1. Categorize: Markets | Economy | Banking | Startups | Policy
-2. Rate importance: 1-10 (10 = major market impact)
-3. Extract a concise 2-3 sentence summary
-
-Return ONLY valid JSON array. Each item:
-{
-  "title": "headline",
-  "summary": "2-3 sentences",
-  "category": "Markets|Economy|Banking|Startups|Policy",
-  "importance": 1-10,
-  "source": "source name",
-  "url": "article url",
-  "timestamp": "ISO timestamp"
-}
-
-Return exactly 10 articles sorted by importance (highest first). No markdown, no explanation, just JSON.`;
-
+// Final verified Indian finance RSS feeds
 const RSS_FEEDS = [
-  "https://feeds.economictimes.indiatimes.com/et-markets/",
-  "https://www.moneycontrol.com/rss/mcnews/",
-  "https://www.livemint.com/feed/latest-news.rss",
+  "https://feeds.bloomberg.com/markets/news.rss",
+  "https://feeds.feedburner.com/ndtvprofit-latest",
+  "https://zeenews.india.com/rss/business.xml",
+  "https://www.indiatoday.in/rss/1206513",
 ];
 
-async function fetchAndParseRSSFeeds() {
-  const parser = new Parser();
-  const allItems = [];
-
-  console.log("🔄 [CRON] Fetching RSS feeds...");
-
-  for (const feedUrl of RSS_FEEDS) {
-    try {
-      const feed = await parser.parseURL(feedUrl);
-      const items = feed.items.slice(0, 10).map((item) => ({
-        title: item.title || "Untitled",
-        link: item.link || "",
-        pubDate: item.pubDate || new Date().toISOString(),
-        source: feed.title || "Finance News",
-      }));
-      allItems.push(...items);
-      console.log(`✅ [CRON] Fetched ${items.length} items from ${feed.title}`);
-    } catch (error) {
-      console.error(`⚠️ [CRON] Failed to fetch ${feedUrl}:`, error.message);
-    }
-  }
-
-  return allItems.slice(0, 30); // Keep top 30 for processing
-}
-
-async function processWithGemini(articles) {
-  console.log("🤖 [CRON] Processing with Gemini 2.0 Flash...");
-
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
-  const feedText = articles
-    .map(
-      (a) =>
-        `Title: ${a.title}\nSource: ${a.source}\nDate: ${a.pubDate}\nURL: ${a.link}`
-    )
-    .join("\n---\n");
-
-  const userMessage = `Process these finance news articles:\n\n${feedText}`;
-
+export async function GET(request) {
   try {
+    console.log("🚀 [CRON] Starting news fetch cycle...");
+    
+    // Check auth
+    const authHeader = request.headers.get("authorization");
+    const cronSecret = process.env.CRON_SECRET;
+
+    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+      console.error("❌ [CRON] Unauthorized");
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Check env vars
+    console.log("📋 [CRON] Verifying environment variables...");
+    if (!process.env.GEMINI_API_KEY) {
+      throw new Error("GEMINI_API_KEY not set");
+    }
+    if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
+      throw new Error("Redis credentials not set");
+    }
+
+    // Get KV client
+    const kv = createClient({
+      url: process.env.KV_REST_API_URL,
+      token: process.env.KV_REST_API_TOKEN,
+    });
+
+    // Fetch RSS feeds
+    console.log("🔄 [CRON] Fetching RSS feeds...");
+    const parser = new Parser();
+    const allItems = [];
+
+    for (const feedUrl of RSS_FEEDS) {
+      try {
+        console.log(`  📡 Trying: ${feedUrl}`);
+        const feed = await parser.parseURL(feedUrl);
+        const items = feed.items.slice(0, 15).map((item) => ({
+          title: item.title || "Untitled",
+          link: item.link || "",
+          pubDate: item.pubDate || new Date().toISOString(),
+          source: feed.title || "Finance News",
+          content: item.content || item.description || "",
+        }));
+        allItems.push(...items);
+        console.log(`  ✅ Got ${items.length} items from ${feed.title}`);
+      } catch (e) {
+        console.error(`  ⚠️ Failed: ${e.message}`);
+      }
+    }
+
+    console.log(`📊 [CRON] Total articles fetched: ${allItems.length}`);
+
+    if (allItems.length === 0) {
+      throw new Error("No articles fetched from any RSS feed");
+    }
+
+    // Prepare text for Gemini
+    const feedText = allItems
+      .map((a) => `Title: ${a.title}\nURL: ${a.link}\nSource: ${a.source}\n${a.content.substring(0, 200)}`)
+      .join("\n---\n");
+
+    // Call Gemini API
+    console.log("🤖 [CRON] Processing with Gemini 2.0 Flash...");
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
     const response = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: userMessage }] }],
-      systemInstruction: SYSTEM_PROMPT,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: `You are an Indian finance news editor. Extract and summarize the 10 most important Indian finance/markets news stories from these articles.
+
+Focus on: Sensex, Nifty, NSE/BSE, RBI policy, rupee, Indian banks, startups, IPOs, Union Budget, GST, SEBI.
+
+Return ONLY valid JSON array. Each item must have:
+- title: headline
+- summary: 2-3 sentences
+- category: Markets|Economy|Banking|Startups|Policy|Other
+- importance: 1-10 (10=most important)
+- source: source name
+- url: article URL
+
+Just return the JSON array, no markdown, no explanation.
+
+Articles:
+${feedText}`,
+            },
+          ],
+        },
+      ],
     });
 
     const responseText = response.response.text();
-    console.log("📝 [CRON] Raw Gemini response:", responseText.substring(0, 200));
+    console.log("📝 [CRON] Got Gemini response, length:", responseText.length);
 
-    // Parse JSON response - handle both markdown code blocks and raw JSON
+    // Parse JSON - handle markdown code blocks
     let jsonMatch = responseText.match(/```json\n?([\s\S]*?)\n?```/);
     if (!jsonMatch) {
       jsonMatch = responseText.match(/\[[\s\S]*\]/);
     }
-    
+
     if (!jsonMatch) {
-      throw new Error("No JSON array found in response");
+      console.error("❌ No JSON found. Raw response:", responseText.substring(0, 300));
+      throw new Error("No JSON array in Gemini response");
     }
 
-    const jsonStr = jsonMatch[1] || jsonMatch[0];
-    const parsedArticles = JSON.parse(jsonStr);
-    
-    if (!Array.isArray(parsedArticles)) {
+    const articles = JSON.parse(jsonMatch[1] || jsonMatch[0]);
+
+    if (!Array.isArray(articles)) {
       throw new Error("Response is not an array");
     }
 
-    console.log(`✅ [CRON] Processed ${parsedArticles.length} articles`);
-    return parsedArticles;
-  } catch (error) {
-    console.error("❌ [CRON] Gemini processing failed:", error.message);
-    throw error;
-  }
-}
+    console.log(`✅ [CRON] Processed ${articles.length} articles from Gemini`);
 
-async function deduplicateAndStore(newArticles) {
-  const kv = getKV();
+    // Get existing articles for deduplication
+    const existing = (await kv.get("articles")) || [];
+    const existingTitles = new Set(existing.map((a) => a.title));
 
-  console.log("💾 [CRON] Deduplicating and storing...");
+    // Filter duplicates
+    const uniqueNew = articles.filter((a) => !existingTitles.has(a.title));
+    console.log(`📊 New unique: ${uniqueNew.length}, Existing: ${existing.length}`);
 
-  // Get existing articles
-  const existingArticles = (await kv.get("articles")) || [];
-  const existingTitles = new Set(existingArticles.map((a) => a.title));
+    // Combine and keep last 70
+    const combined = [...uniqueNew, ...existing].slice(0, 70);
 
-  // Filter out duplicates
-  const uniqueNew = newArticles.filter((a) => !existingTitles.has(a.title));
+    // Store in Redis
+    await kv.set("articles", combined);
+    await kv.set("lastUpdated", new Date().toISOString());
+    await kv.set("articleCount", combined.length);
 
-  console.log(
-    `📊 [CRON] New: ${newArticles.length}, Unique: ${uniqueNew.length}, Existing: ${existingArticles.length}`
-  );
-
-  // Combine: new unique + existing, keep last 70
-  const combined = [...uniqueNew, ...existingArticles].slice(0, 70);
-
-  // Store combined articles
-  await kv.set("articles", combined);
-
-  // Store metadata
-  await kv.set("lastUpdated", new Date().toISOString());
-  await kv.set("articleCount", combined.length);
-
-  console.log(`✅ [CRON] Stored ${combined.length} articles in Redis`);
-  return combined;
-}
-
-export async function GET(request) {
-  const authHeader = request.headers.get("authorization");
-  const cronSecret = process.env.CRON_SECRET;
-
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-    console.error("❌ [CRON] Unauthorized attempt");
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  try {
-    console.log("🚀 [CRON] Starting news fetch cycle...");
-
-    // Step 1: Fetch RSS feeds
-    const rawArticles = await fetchAndParseRSSFeeds();
-    if (rawArticles.length === 0) {
-      return Response.json(
-        { error: "No articles fetched from RSS feeds" },
-        { status: 500 }
-      );
-    }
-
-    // Step 2: Process with Gemini
-    const processedArticles = await processWithGemini(rawArticles);
-
-    // Step 3: Deduplicate and store
-    const stored = await deduplicateAndStore(processedArticles);
-
+    console.log(`✅ [CRON] Stored ${combined.length} articles in Redis`);
     console.log("✅ [CRON] Cycle complete!");
+
     return Response.json({
       success: true,
-      articlesProcessed: processedArticles.length,
-      articlesStored: stored.length,
+      articlesProcessed: articles.length,
+      articlesStored: combined.length,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
