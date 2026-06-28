@@ -1,4 +1,3 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import Parser from "rss-parser";
 import { createClient } from "@vercel/kv";
 
@@ -27,8 +26,8 @@ export async function GET(request) {
 
     // Check env vars
     console.log("📋 [CRON] Verifying environment variables...");
-    if (!process.env.GEMINI_API_KEY) {
-      throw new Error("GEMINI_API_KEY not set");
+    if (!process.env.OPENROUTER_API_KEY) {
+      throw new Error("OPENROUTER_API_KEY not set");
     }
     if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
       throw new Error("Redis credentials not set");
@@ -69,23 +68,28 @@ export async function GET(request) {
       throw new Error("No articles fetched from any RSS feed");
     }
 
-    // Prepare text for Gemini
+    // Prepare text for Claude
     const feedText = allItems
       .map((a) => `Title: ${a.title}\nURL: ${a.link}\nSource: ${a.source}\n${a.content.substring(0, 200)}`)
       .join("\n---\n");
 
-    // Call Gemini API
-    console.log("🤖 [CRON] Processing with Gemini 2.0 Flash...");
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    // Call OpenRouter API (Claude via OpenRouter)
+    console.log("🤖 [CRON] Processing with Claude via OpenRouter...");
 
-    const response = await model.generateContent({
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: `You are an Indian finance news editor. Extract and summarize the 10 most important Indian finance/markets news stories from these articles.
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "HTTP-Referer": "https://finpulse-india.com",
+        "X-Title": "FinPulse India",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "anthropic/claude-3.5-haiku",
+        messages: [
+          {
+            role: "user",
+            content: `You are an Indian finance news editor. Extract and summarize the 10 most important Indian finance/markets news stories.
 
 Focus on: Sensex, Nifty, NSE/BSE, RBI policy, rupee, Indian banks, startups, IPOs, Union Budget, GST, SEBI.
 
@@ -99,16 +103,22 @@ Return ONLY valid JSON array. Each item must have:
 
 Just return the JSON array, no markdown, no explanation.
 
-Articles:
+Articles to process:
 ${feedText}`,
-            },
-          ],
-        },
-      ],
+          },
+        ],
+      }),
     });
 
-    const responseText = response.response.text();
-    console.log("📝 [CRON] Got Gemini response, length:", responseText.length);
+    if (!response.ok) {
+      const error = await response.text();
+      console.error("❌ OpenRouter API error:", error);
+      throw new Error(`OpenRouter API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const responseText = data.choices[0].message.content;
+    console.log("📝 [CRON] Got OpenRouter response, length:", responseText.length);
 
     // Parse JSON - handle markdown code blocks
     let jsonMatch = responseText.match(/```json\n?([\s\S]*?)\n?```/);
@@ -118,7 +128,7 @@ ${feedText}`,
 
     if (!jsonMatch) {
       console.error("❌ No JSON found. Raw response:", responseText.substring(0, 300));
-      throw new Error("No JSON array in Gemini response");
+      throw new Error("No JSON array in response");
     }
 
     const articles = JSON.parse(jsonMatch[1] || jsonMatch[0]);
@@ -127,7 +137,7 @@ ${feedText}`,
       throw new Error("Response is not an array");
     }
 
-    console.log(`✅ [CRON] Processed ${articles.length} articles from Gemini`);
+    console.log(`✅ [CRON] Processed ${articles.length} articles from Claude`);
 
     // Get existing articles for deduplication
     const existing = (await kv.get("articles")) || [];
