@@ -3,7 +3,6 @@ import { createClient } from "@vercel/kv";
 
 export const maxDuration = 60;
 
-// Final verified Indian finance RSS feeds
 const RSS_FEEDS = [
   "https://feeds.bloomberg.com/markets/news.rss",
   "https://feeds.feedburner.com/ndtvprofit-latest",
@@ -15,7 +14,6 @@ export async function GET(request) {
   try {
     console.log("🚀 [CRON] Starting news fetch cycle...");
     
-    // Check auth
     const authHeader = request.headers.get("authorization");
     const cronSecret = process.env.CRON_SECRET;
 
@@ -24,7 +22,6 @@ export async function GET(request) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Check env vars
     console.log("📋 [CRON] Verifying environment variables...");
     if (!process.env.OPENROUTER_API_KEY) {
       throw new Error("OPENROUTER_API_KEY not set");
@@ -33,13 +30,11 @@ export async function GET(request) {
       throw new Error("Redis credentials not set");
     }
 
-    // Get KV client
     const kv = createClient({
       url: process.env.KV_REST_API_URL,
       token: process.env.KV_REST_API_TOKEN,
     });
 
-    // Fetch RSS feeds
     console.log("🔄 [CRON] Fetching RSS feeds...");
     const parser = new Parser();
     const allItems = [];
@@ -68,13 +63,11 @@ export async function GET(request) {
       throw new Error("No articles fetched from any RSS feed");
     }
 
-    // Prepare text for Claude
     const feedText = allItems
       .map((a) => `Title: ${a.title}\nURL: ${a.link}\nSource: ${a.source}\n${a.content.substring(0, 200)}`)
       .join("\n---\n");
 
-    // Call OpenRouter API (Claude via OpenRouter)
-    console.log("🤖 [CRON] Processing with Claude via OpenRouter...");
+    console.log("🤖 [CRON] Calling OpenRouter API (auto-routing to best available model)...");
 
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -85,7 +78,7 @@ export async function GET(request) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "anthropic/claude-3.5-haiku",
+        model: "openrouter/auto",
         messages: [
           {
             role: "user",
@@ -118,9 +111,9 @@ ${feedText}`,
 
     const data = await response.json();
     const responseText = data.choices[0].message.content;
-    console.log("📝 [CRON] Got OpenRouter response, length:", responseText.length);
+    const usedModel = data.model || "unknown";
+    console.log(`📝 [CRON] Got response from model: ${usedModel}, length: ${responseText.length}`);
 
-    // Parse JSON - handle markdown code blocks
     let jsonMatch = responseText.match(/```json\n?([\s\S]*?)\n?```/);
     if (!jsonMatch) {
       jsonMatch = responseText.match(/\[[\s\S]*\]/);
@@ -137,20 +130,16 @@ ${feedText}`,
       throw new Error("Response is not an array");
     }
 
-    console.log(`✅ [CRON] Processed ${articles.length} articles from Claude`);
+    console.log(`✅ [CRON] Processed ${articles.length} articles`);
 
-    // Get existing articles for deduplication
     const existing = (await kv.get("articles")) || [];
     const existingTitles = new Set(existing.map((a) => a.title));
 
-    // Filter duplicates
     const uniqueNew = articles.filter((a) => !existingTitles.has(a.title));
     console.log(`📊 New unique: ${uniqueNew.length}, Existing: ${existing.length}`);
 
-    // Combine and keep last 70
     const combined = [...uniqueNew, ...existing].slice(0, 70);
 
-    // Store in Redis
     await kv.set("articles", combined);
     await kv.set("lastUpdated", new Date().toISOString());
     await kv.set("articleCount", combined.length);
@@ -162,10 +151,13 @@ ${feedText}`,
       success: true,
       articlesProcessed: articles.length,
       articlesStored: combined.length,
+      modelUsed: usedModel,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
     console.error("❌ [CRON] Error:", error.message);
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ 
+      error: error.message,
+    }, { status: 500 });
   }
 }
